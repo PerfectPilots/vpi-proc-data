@@ -29,7 +29,7 @@ jobs:
           node-version: '20'
 
       - name: Parse VATSIM UK sector file
-        run: node scripts/parse-vatuk.js
+        run: node scripts/parse-uk.js
 
       - name: Show output summary
         run: |
