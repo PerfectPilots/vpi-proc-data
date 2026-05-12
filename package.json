@@ -1,9 +1,9 @@
 {
   "name": "vpi-atc-procedure-pipeline",
   "version": "1.0.0",
-  "description": "Parses VATSIM UK sector file and publishes procedure data for VPI ATC Client",
+  "description": "Procedure data for VPI ATC Client",
   "scripts": {
-    "build": "node scripts/parse-vatuk.js"
+    "build": "node scripts/parse-uk.js"
   },
   "engines": { "node": ">=18" }
 }
