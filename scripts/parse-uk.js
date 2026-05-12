@@ -8,7 +8,7 @@ const BRANCH = 'main';
 const RAW    = `https://raw.githubusercontent.com/${REPO}/${BRANCH}`;
 
 const AIRPORTS = [
-  'EGJB','EGJH','EGJA',
+  'EGJB','EGJJ','EGJA',
   'EIDW','EINN','EICK',
   'EGKK','EGLL','EGLC','EGSS',
   'EGCC','EGNM','EGGP','EGNT',
