@@ -1,15 +1,4 @@
 #!/usr/bin/env node
-/**
- * VPI ATC — VATSIM UK Sector File Parser
- *
- * EuroScope Sids.txt format:
- *   SID:AIRPORT:RUNWAY:NAME:FIX1 FIX2 FIX3
- *   e.g. SID:EGLL:09L:CPT4K:D113B D256K WOD CPT
- *
- * Stars.txt same format with STAR: prefix.
- * Fixes.txt: FIXNAME   N049.26.06.000 W002.36.10.000
- */
-
 const https = require('https');
 const fs    = require('fs');
 const path  = require('path');
@@ -30,6 +19,22 @@ const AIRPORTS = [
   'EGAA','EGAC','EGPK',
 ];
 
+// Global fix files — all of them
+const GLOBAL_FIX_FILES = [
+  'Navaids/FIXES_UK.txt',
+  'Navaids/FIXES_CICZ.txt',       // Channel Islands fixes
+  'Navaids/FIXES_Virtual.txt',
+  'Navaids/FIXES_PHONETIC.txt',
+  'Navaids/FIXES_TACAN-Routes.txt',
+  'Navaids/FIXES_HMRI-Gates.txt',
+  'Navaids/FIXES_Lat Lon.txt',
+  'Navaids/VOR_UK.txt',
+  'Navaids/VOR_Non-UK.txt',
+  'Navaids/NDB_All.txt',
+  'Navaids/Fixes_Non-UK/FIXES_IE.txt',  // Irish fixes (EIDW etc)
+  'Navaids/Fixes_Non-UK/FIXES_FR.txt',  // French fixes (Channel Islands area)
+];
+
 function fetch(url) {
   return new Promise((resolve, reject) => {
     const get = (u) => {
@@ -45,7 +50,6 @@ function fetch(url) {
   });
 }
 
-// N049.26.06.000 or W002.36.10.000
 function parseDMS(str) {
   if (!str) return null;
   const m = str.trim().match(/^([NSEW])(\d+)\.(\d+)\.(\d+\.?\d*)$/);
@@ -76,8 +80,6 @@ function parseFixes(text) {
   return fixes;
 }
 
-// SID:EGLL:09L:CPT4K:D113B D256K WOD CPT
-// or SID:09L:CPT4K:D113B D256K WOD (no airport field)
 function parseProcFile(text) {
   const procs = [];
   if (!text) return procs;
@@ -86,8 +88,8 @@ function parseProcFile(text) {
     if (!/^(SID|STAR):/i.test(line)) continue;
     const parts = line.split(':');
     if (parts.length < 4) continue;
-
-    const p1IsICAO = /^EG[A-Z]{2}$|^EI[A-Z]{2}$/.test(parts[1]);
+    const p1 = parts[1].trim();
+    const p1IsICAO = /^[A-Z]{4}$/.test(p1);
     let runway, name, fixStr;
     if (p1IsICAO) {
       runway = parts[2].trim();
@@ -98,7 +100,6 @@ function parseProcFile(text) {
       name   = parts[2].trim();
       fixStr = parts.slice(3).join(':').trim();
     }
-
     if (!runway || !name) continue;
     const fixNames = fixStr.split(/\s+/).filter(f => f && /^[A-Z0-9]{2,6}$/.test(f));
     procs.push({ name, runway, fixNames });
@@ -116,14 +117,29 @@ async function main() {
   console.log('VPI ATC — VATSIM UK Sector File Parser');
   console.log('========================================');
 
-  console.log('Fetching global fixes...');
-  const [fixText, vorText, ndbText] = await Promise.all([
-    fetch(`${RAW}/Fixes/Fixes.txt`),
-    fetch(`${RAW}/Navaids/VORs.txt`),
-    fetch(`${RAW}/Navaids/NDBs.txt`),
-  ]);
-  const globalFixes = { ...parseFixes(fixText), ...parseFixes(vorText), ...parseFixes(ndbText) };
-  console.log(`  Global fixes loaded: ${Object.keys(globalFixes).length}`);
+  // Fetch all global fix files in parallel
+  console.log(`Fetching ${GLOBAL_FIX_FILES.length} global fix files...`);
+  const fixTexts = await Promise.all(
+    GLOBAL_FIX_FILES.map(f => fetch(`${RAW}/${f}`))
+  );
+
+  const globalFixes = {};
+  GLOBAL_FIX_FILES.forEach((f, i) => {
+    const parsed = parseFixes(fixTexts[i]);
+    const count  = Object.keys(parsed).length;
+    if (count > 0) {
+      Object.assign(globalFixes, parsed);
+      console.log(`  ${f}: ${count} fixes`);
+    } else {
+      console.log(`  ${f}: not found / empty`);
+    }
+  });
+  console.log(`  Total: ${Object.keys(globalFixes).length} fixes`);
+
+  // Debug key Channel Islands fixes
+  ['GUR','JSY','ALD','ORTAC','LUSIT','ANGLA','SKERY','SKESO'].forEach(f => {
+    console.log(`  ${f}: ${globalFixes[f] ? JSON.stringify(globalFixes[f]) : 'MISSING'}`);
+  });
 
   const output = {};
   let totalSIDs = 0, totalSTARs = 0;
@@ -137,16 +153,26 @@ async function main() {
     ]);
 
     const fixMap = { ...globalFixes, ...parseFixes(localFixText) };
-    const SIDs  = parseProcFile(sidText) .map(p => ({ name: p.name, runway: p.runway, fixes: resolveFixes(p.fixNames, fixMap) })).filter(p => p.fixes.length >= 1);
-    const STARs = parseProcFile(starText).map(p => ({ name: p.name, runway: p.runway, fixes: resolveFixes(p.fixNames, fixMap) })).filter(p => p.fixes.length >= 1);
+
+    const rawSIDs  = parseProcFile(sidText);
+    const rawSTARs = parseProcFile(starText);
+
+    // Debug missing fixes for first STAR
+    if (rawSTARs.length > 0 && (icao === 'EGJB' || icao === 'EGLL')) {
+      const s = rawSTARs[0];
+      const missing = s.fixNames.filter(f => !fixMap[f]);
+      if (missing.length) console.log(`\n    ${icao} STAR "${s.name}" missing fixes: [${missing}]`);
+    }
+
+    const SIDs  = rawSIDs .map(p => ({ name: p.name, runway: p.runway, fixes: resolveFixes(p.fixNames, fixMap) })).filter(p => p.fixes.length >= 1);
+    const STARs = rawSTARs.map(p => ({ name: p.name, runway: p.runway, fixes: resolveFixes(p.fixNames, fixMap) })).filter(p => p.fixes.length >= 1);
 
     if (SIDs.length || STARs.length) {
       output[icao] = { SID: SIDs, STAR: STARs, APPROACH: [] };
       totalSIDs += SIDs.length; totalSTARs += STARs.length;
       console.log(`${SIDs.length} SIDs, ${STARs.length} STARs`);
     } else {
-      const hint = sidText ? `sidText=${sidText.slice(0,80).replace(/\n/g,' ')}` : 'no sidText';
-      console.log(`no data — ${hint}`);
+      console.log(`no data (rawSID=${rawSIDs.length} rawSTAR=${rawSTARs.length})`);
     }
   }
 
@@ -157,7 +183,8 @@ async function main() {
     generated: new Date().toISOString(),
     source: `https://github.com/${REPO}`,
     airports: Object.keys(output).length,
-    sids: totalSIDs, stars: totalSTARs,
+    sids: totalSIDs,
+    stars: totalSTARs,
   }, null, 2));
 
   console.log(`\n✓ ${Object.keys(output).length} airports — ${totalSIDs} SIDs, ${totalSTARs} STARs`);
