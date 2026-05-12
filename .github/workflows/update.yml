@@ -1,0 +1,49 @@
+name: Update Procedure Data
+
+on:
+  # Run on every push to main
+  push:
+    branches: [main]
+
+  # Run automatically every 28 days (AIRAC cycle)
+  # 0400 UTC on the 1st of each month is a safe approximation
+  schedule:
+    - cron: '0 4 1,29 * *'
+
+  # Allow manual trigger from GitHub Actions UI
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to push to gh-pages
+
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Parse VATSIM UK sector file
+        run: node scripts/parse-vatuk.js
+
+      - name: Show output summary
+        run: |
+          echo "=== procedures-meta.json ==="
+          cat docs/procedures-meta.json
+          echo ""
+          echo "=== procedures.json size ==="
+          ls -lh docs/procedures.json
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs
+          # Keep history clean — only latest data matters
+          force_orphan: true
+          commit_message: "Update procedures data [${{ github.run_number }}]"
